@@ -680,52 +680,93 @@ static int set_up_ics(void)
 static int set_up_plls(void)
 {
 #if defined(STM32_PLL1_ENABLED)
-	/* TODO: Do not switch systematically on HSI if not needed */
-	stm32_clock_switch_to_hsi();
+	bool pll1_already_configured = false;
 
-	LL_RCC_PLL1_Disable();
+#if defined(CONFIG_BOARD_NUCLEO_N657X0_Q_STM32N657XX_OEMUROT_XIP)
+	/*
+	 * On NUCLEO-N657X0-Q, external flash (from which this code is executing
+	 * if XIP is enabled) is clocked from an IC block fed by PLL1 rather than
+	 * HCLK (Nucleo-N657X0-Q cannot run external flash off HCLK at 200MHz -
+	 * zephyr-stm32-oemxrot/oemxrot/stm32cube/stm32n6/appli-secure.cmake's).
+	 * Disabling PLL1 below even to reconfigure it to the same final values
+	 * would glitch that flash's clock out from under the CPU's own fetch
+	 * unit and hang or crash the part. This is only safe to skip because
+	 * OEMuROT's own build is kept in lockstep with this exact target: if
+	 * PLL1 is already running at it, there is nothing left for this
+	 * function to safely do. If the two configs ever drift apart, this
+	 * check simply falls through to the normal reconfiguration path,
+	 * which is correct for every other target.
+	 */
+	uint32_t pll1_target_source;
 
-	/* Configure PLL source : Can be HSE, HSI, MSI */
 	if (IS_ENABLED(STM32_PLL_SRC_HSE)) {
-		/* Main PLL configuration and activation */
-		LL_RCC_PLL1_SetSource(LL_RCC_PLLSOURCE_HSE);
+		pll1_target_source = LL_RCC_PLLSOURCE_HSE;
 	} else if (IS_ENABLED(STM32_PLL_SRC_MSI)) {
-		/* Main PLL configuration and activation */
-		LL_RCC_PLL1_SetSource(LL_RCC_PLLSOURCE_MSI);
+		pll1_target_source = LL_RCC_PLLSOURCE_MSI;
 	} else if (IS_ENABLED(STM32_PLL_SRC_HSI)) {
-		/* Main PLL configuration and activation */
-		LL_RCC_PLL1_SetSource(LL_RCC_PLLSOURCE_HSI);
+		pll1_target_source = LL_RCC_PLLSOURCE_HSI;
 	} else {
-		return -ENOTSUP;
+		/* no valid target: never match */
+		pll1_target_source = UINT32_MAX;
 	}
 
-	/* Disable PLL1 modulation spread-spectrum */
-	LL_RCC_PLL1_DisableModulationSpreadSpectrum();
+	pll1_already_configured =
+		(LL_RCC_PLL1_IsReady() == 1U) &&
+		(LL_RCC_PLL1_GetSource() == pll1_target_source) &&
+		(LL_RCC_PLL1_GetM() == STM32_PLL1_M_DIVISOR) &&
+		(LL_RCC_PLL1_GetN() == STM32_PLL1_N_MULTIPLIER) &&
+		(LL_RCC_PLL1_GetP1() == STM32_PLL1_P1_DIVISOR) &&
+		(LL_RCC_PLL1_GetP2() == STM32_PLL1_P2_DIVISOR);
+#endif /* CONFIG_BOARD_NUCLEO_N657X0_Q_STM32N657XX_OEMUROT_XIP */
 
-	/* Disable bypass to use the PLL VCO */
-	if (LL_RCC_PLL1_IsEnabledBypass()) {
-		LL_RCC_PLL1_DisableBypass();
-	}
+	if (!pll1_already_configured) {
+		/* TODO: Do not switch systematically on HSI if not needed */
+		stm32_clock_switch_to_hsi();
 
-	/* Configure PLL */
-	LL_RCC_PLL1_SetM(STM32_PLL1_M_DIVISOR);
-	LL_RCC_PLL1_SetN(STM32_PLL1_N_MULTIPLIER);
-	LL_RCC_PLL1_SetP1(STM32_PLL1_P1_DIVISOR);
-	LL_RCC_PLL1_SetP2(STM32_PLL1_P2_DIVISOR);
+		LL_RCC_PLL1_Disable();
 
-	/* Disable fractional mode */
-	LL_RCC_PLL1_SetFRACN(0);
-	LL_RCC_PLL1_DisableFractionalModulationSpreadSpectrum();
+		/* Configure PLL source : Can be HSE, HSI, MSI */
+		if (IS_ENABLED(STM32_PLL_SRC_HSE)) {
+			/* Main PLL configuration and activation */
+			LL_RCC_PLL1_SetSource(LL_RCC_PLLSOURCE_HSE);
+		} else if (IS_ENABLED(STM32_PLL_SRC_MSI)) {
+			/* Main PLL configuration and activation */
+			LL_RCC_PLL1_SetSource(LL_RCC_PLLSOURCE_MSI);
+		} else if (IS_ENABLED(STM32_PLL_SRC_HSI)) {
+			/* Main PLL configuration and activation */
+			LL_RCC_PLL1_SetSource(LL_RCC_PLLSOURCE_HSI);
+		} else {
+			return -ENOTSUP;
+		}
 
-	LL_RCC_PLL1_AssertModulationSpreadSpectrumReset();
+		/* Disable PLL1 modulation spread-spectrum */
+		LL_RCC_PLL1_DisableModulationSpreadSpectrum();
 
-	/* Enable post division */
-	if (!LL_RCC_PLL1P_IsEnabled()) {
-		LL_RCC_PLL1P_Enable();
-	}
+		/* Disable bypass to use the PLL VCO */
+		if (LL_RCC_PLL1_IsEnabledBypass()) {
+			LL_RCC_PLL1_DisableBypass();
+		}
 
-	LL_RCC_PLL1_Enable();
-	while (LL_RCC_PLL1_IsReady() != 1U) {
+		/* Configure PLL */
+		LL_RCC_PLL1_SetM(STM32_PLL1_M_DIVISOR);
+		LL_RCC_PLL1_SetN(STM32_PLL1_N_MULTIPLIER);
+		LL_RCC_PLL1_SetP1(STM32_PLL1_P1_DIVISOR);
+		LL_RCC_PLL1_SetP2(STM32_PLL1_P2_DIVISOR);
+
+		/* Disable fractional mode */
+		LL_RCC_PLL1_SetFRACN(0);
+		LL_RCC_PLL1_DisableFractionalModulationSpreadSpectrum();
+
+		LL_RCC_PLL1_AssertModulationSpreadSpectrumReset();
+
+		/* Enable post division */
+		if (!LL_RCC_PLL1P_IsEnabled()) {
+			LL_RCC_PLL1P_Enable();
+		}
+
+		LL_RCC_PLL1_Enable();
+		while (LL_RCC_PLL1_IsReady() != 1U) {
+		}
 	}
 #endif /* STM32_PLL1_ENABLED */
 
