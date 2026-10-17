@@ -775,7 +775,13 @@ static int imx335_init(const struct device *dev)
 
 		gpio_pin_set_dt(&cfg->reset_gpio, 0);
 
-		k_sleep(K_USEC(600)); /* T4 */
+		/*
+		 * XCLR may rise up slowly. On the MB1854 module it is pulled up
+		 * through an RC (R = 10 kOhm, C = 100 nF, tau = 1 ms). It rises
+		 * to VIH (0.8 x OVDD) after tau x ln(5) = 1.61 ms, 2.06 ms with
+		 * worst-case RC tolerance. Add T4 (min. 20 us).
+		 */
+		k_sleep(K_USEC(2080));
 	}
 #endif
 
